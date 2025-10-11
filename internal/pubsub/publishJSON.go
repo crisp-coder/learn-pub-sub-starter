@@ -21,5 +21,6 @@ func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 		log.Println(err)
 		return err
 	}
+	log.Printf("Publishing %v\n", val)
 	return nil
 }

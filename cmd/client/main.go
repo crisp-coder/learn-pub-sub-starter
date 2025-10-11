@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
@@ -18,7 +19,7 @@ func main() {
 	}
 	defer connection.Close()
 
-	_, err = connection.Channel()
+	ch, err := connection.Channel()
 	if err != nil {
 		log.Println(err)
 		return
@@ -29,10 +30,11 @@ func main() {
 		log.Println(err)
 		return
 	}
+	queueName := routing.PauseKey + "." + username
 	_, _, err = pubsub.DeclareAndBind(
 		connection,
 		routing.ExchangePerilDirect,
-		routing.PauseKey+"."+username,
+		queueName,
 		routing.PauseKey,
 		pubsub.TRANSIENT,
 	)
@@ -42,6 +44,22 @@ func main() {
 	}
 
 	gamestate := gamelogic.NewGameState(username)
+	pubsub.SubscribeJSON(
+		connection,
+		routing.ExchangePerilDirect,
+		queueName,
+		routing.PauseKey,
+		pubsub.TRANSIENT,
+		handlerPause(gamestate))
+
+	moveQueue := routing.ArmyMovesPrefix + "." + username
+	pubsub.SubscribeJSON(
+		connection,
+		routing.ExchangePerilTopic,
+		moveQueue,
+		routing.ArmyMovesPrefix+".*",
+		pubsub.TRANSIENT,
+		handlerMove(gamestate))
 
 	for {
 		input := gamelogic.GetInput()
@@ -56,11 +74,12 @@ func main() {
 				log.Println(err)
 			}
 		case "move":
-			_, err := gamestate.CommandMove(input)
+			armyMove, err := gamestate.CommandMove(input)
 			if err != nil {
 				log.Println(err)
 			}
-			log.Println("move successful")
+			pubsub.PublishJSON(ch, routing.ExchangePerilTopic, moveQueue, armyMove)
+			log.Println("Published move message")
 		case "status":
 			gamestate.CommandStatus()
 		case "spam":
@@ -74,4 +93,26 @@ func main() {
 			log.Println("unkown command")
 		}
 	}
+}
+
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) pubsub.AckType {
+	handler := func(ps routing.PlayingState) pubsub.AckType {
+		defer fmt.Print("> ")
+		gs.HandlePause(ps)
+		return pubsub.ACK
+	}
+
+	return handler
+}
+
+func handlerMove(gs *gamelogic.GameState) func(am gamelogic.ArmyMove) pubsub.AckType {
+	handler := func(am gamelogic.ArmyMove) pubsub.AckType {
+		defer fmt.Print("> ")
+		outcome := gs.HandleMove(am)
+		if outcome == gamelogic.MoveOutComeSafe || outcome == gamelogic.MoveOutcomeMakeWar {
+			return pubsub.ACK
+		}
+		return pubsub.NACKDISCARD
+	}
+	return handler
 }
