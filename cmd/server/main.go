@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/gob"
+	"fmt"
 	"log"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
@@ -34,6 +37,15 @@ func main() {
 		log.Println(err)
 		return
 	}
+	err = pubsub.SubscribeGob(
+		connection,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.DURABLE,
+		handleLog,
+		unmarshalLog,
+	)
 
 	gamelogic.PrintServerHelp()
 
@@ -72,4 +84,17 @@ func PublishResume(ch *amqp.Channel) {
 		log.Println(err)
 		return
 	}
+}
+
+func handleLog(gl routing.GameLog) pubsub.AckType {
+	defer fmt.Print("> ")
+	gamelogic.WriteLog(gl)
+	return pubsub.ACK
+}
+
+func unmarshalLog(data []byte) (routing.GameLog, error) {
+	gl := routing.GameLog{}
+	decoder := gob.NewDecoder(bytes.NewReader(data))
+	decoder.Decode(&gl)
+	return gl, nil
 }
